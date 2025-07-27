@@ -14,7 +14,7 @@ pub struct BankMsgSrsV1 {
 pub struct Stmttrnrs {
     pub trnuid: Option<String>,
     pub status: Option<Status>,
-    pub ccstmtrs: Stmtrs,
+    pub stmtrs: Stmtrs,
 }
 
 #[derive(Clone)]
@@ -56,7 +56,7 @@ impl<'a> Parseable<'a> for Stmttrnrs {
                     return Ok(Self {
                         trnuid: s_trnuid,
                         status: s_status,
-                        ccstmtrs: s_stmtrs.ok_or(QFXParsingError::MissingRequiredValue(
+                        stmtrs: s_stmtrs.ok_or(QFXParsingError::MissingRequiredValue(
                             "STMTRS section is required in STMTTRNRS".to_string(),
                         ))?,
                     });
