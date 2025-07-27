@@ -14,7 +14,8 @@ pub struct Sonrs {
     status: Option<Status>,
     fi: Option<FinancialInstitution>,
     bid: Option<String>,
-    dt_server: Option<String>,
+    dt_server: Option<String>, // TODO: Should be using the DateTime parser for this part
+    dt_acctup: Option<String>,
     language: Option<String>,
     cookie: Option<String>,
     user_id: Option<String>,
@@ -59,6 +60,7 @@ impl<'a> Parseable<'a> for Sonrs {
             fi: None,
             bid: None,
             dt_server: None,
+            dt_acctup: None,
             language: None,
             user_id: None,
             cookie: None,
@@ -69,11 +71,20 @@ impl<'a> Parseable<'a> for Sonrs {
                     sonrs.status = Some(Status::parse(tokens)?);
                 }
                 "DTSERVER" => {
+                    if let Some(dt_acctup) = tokens.next() {
+                        sonrs.dt_acctup = Some(dt_acctup.to_string());
+                    } else {
+                        return Err(QFXParsingError::UnexpectedEOF(
+                            "Expected token following the DTSERVER token".to_string(),
+                        ));
+                    }
+                }
+                "DTACCTUP" => {
                     if let Some(dt_server) = tokens.next() {
                         sonrs.dt_server = Some(dt_server.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
-                            "Expected token following the DTSERVER token".to_string(),
+                            "Expected token following the DTACCTUP token".to_string(),
                         ));
                     }
                 }

@@ -151,6 +151,14 @@ impl<'a> Parseable<'a> for OFX {
                 "CREDITCARDMSGSRSV1" => {
                     qfx.credit_card_msg_srs_v1 = Some(CCMsgSrsV1::parse(tokens)?);
                 }
+                "BANKMSGSRSV1" => {
+                    if let Some(_) = qfx.bank_msg_srs_v1 {
+                        return Err(QFXParsingError::UnexpectedToken(
+                            "The value for bank message srs v1 is already set".to_string(),
+                        ));
+                    }
+                    qfx.bank_msg_srs_v1 = Some(BankMsgSrsV1::parse(tokens)?);
+                }
                 "/OFX" => {
                     return Ok(qfx);
                 }

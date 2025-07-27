@@ -29,6 +29,38 @@ pub struct Stmtrs {
 #[derive(Clone)]
 pub struct Bankacctfrom {
     pub acct_id: String,
+    pub acct_type: String, // TODO: Should be an enum? I don't really know yet
+    pub bank_id: Option<String>, // TODO: Should be numeric? Maybe!
+}
+
+impl<'a> Parseable<'a> for BankMsgSrsV1 {
+    fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
+        let mut s_stmttrns = None;
+        while let Some(contents) = tokens.next() {
+            match contents {
+                "STMTTRNRS" => {
+                    s_stmttrns = Some(Stmttrnrs::parse(tokens)?);
+                }
+                "/BANKMSGSRSV1" => {
+                    return Ok(Self {
+                        stmttrns: s_stmttrns.ok_or(QFXParsingError::MissingRequiredValue(
+                            "STMTTRNRS is a required value in BANKMSGSRSV1".to_string(),
+                        ))?,
+                    });
+                }
+                _ => {
+                    // Error case, unknown token seen
+                    return Err(QFXParsingError::UnexpectedToken(format!(
+                        "Found unexpected token {} in the BANKMSGSRSV1 type",
+                        contents.to_string()
+                    )));
+                }
+            }
+        }
+        return Err(QFXParsingError::UnexpectedEOF(
+            "Found unexpected EOF. Was still expecting the '/BANKMSGSRSV1' token".to_string(),
+        ));
+    }
 }
 
 impl<'a> Parseable<'a> for Stmttrnrs {
@@ -79,6 +111,8 @@ impl<'a> Parseable<'a> for Stmttrnrs {
 impl<'a> Parseable<'a> for Bankacctfrom {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
         let mut s_acct_id = None;
+        let mut s_acct_type = None;
+        let mut s_bank_id = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "ACCTID" => {
@@ -90,11 +124,33 @@ impl<'a> Parseable<'a> for Bankacctfrom {
                         ));
                     }
                 }
+                "ACCTTYPE" => {
+                    if let Some(acct_type) = tokens.next() {
+                        s_acct_type = Some(acct_type.to_string());
+                    } else {
+                        return Err(QFXParsingError::UnexpectedEOF(
+                            "Expected token following the ACCTTYPE token".to_string(),
+                        ));
+                    }
+                }
+                "BANKID" => {
+                    if let Some(bank_id) = tokens.next() {
+                        s_bank_id = Some(bank_id.to_string());
+                    } else {
+                        return Err(QFXParsingError::UnexpectedEOF(
+                            "Expected token following the ACCTTYPE token".to_string(),
+                        ));
+                    }
+                }
                 "/BANKACCTFROM" => {
                     return Ok(Self {
                         acct_id: s_acct_id.ok_or(QFXParsingError::MissingRequiredValue(
                             "ACCTID is a required value in BANKACCTFROM".to_string(),
                         ))?,
+                        acct_type: s_acct_type.ok_or(QFXParsingError::MissingRequiredValue(
+                            "ACCTTYPE is a required value in BANKACCTFROM".to_string(),
+                        ))?,
+                        bank_id: s_bank_id,
                     });
                 }
                 _ => {
