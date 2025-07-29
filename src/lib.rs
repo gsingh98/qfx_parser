@@ -26,7 +26,7 @@ pub enum QFXParsingError {
     #[error("Missing a required value in the QFX file")]
     UnexpectedDateFormat(),
     #[error("Missing a required value in the QFX file")]
-    InvalidTransactionAmount(),
+    InvalidTransactionAmount(String),
 }
 
 pub(crate) trait Parseable<'a> {
@@ -229,44 +229,6 @@ impl<'a> Parseable<'a> for Status {
     }
 }
 
-// Parses a date time in the OFX standard format. Expects something like: 20250725143000[+7:PDT], 20250725T143000[+7:PDT], 20250725T143000Z, 20250725143000
-// TODO: For the time being this will ignore the timezone at the end and treat everything in UTC time. %Z in chrono
-// does not have the concept of timezones because it claims ambiguitiy (CST = China Standard Time or Central Standard Time)
-fn parse_ofx_datetime(s: &str) -> Result<DateTime<Utc>, ParseError> {
-    // Remove the ending [0:PDT] stuff.
-    let mut s = remove_last_bracketed(s);
-    s = s.strip_suffix("Z").unwrap_or(s);
-
-    // Attempt to parse with milliseconds
-    let format_with_tz_ms = "%Y%m%d%H%M%S%.f";
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format_with_tz_ms) {
-        return Ok(dt.and_utc());
-    }
-
-    let format_with_tz_ms = "%Y%m%dT%H%M%S%.f";
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format_with_tz_ms) {
-        return Ok(dt.and_utc());
-    }
-
-    // Attempt to parse without any time information
-    let format_with_tz_ms = "%Y%m%dT%H%M%S";
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format_with_tz_ms) {
-        return Ok(dt.and_utc());
-    }
-
-    // Attempt to parse with a seconds granularity
-    let format_with_s = "%Y%m%d%H%M%S";
-    NaiveDateTime::parse_from_str(s, format_with_s).map(|dt| dt.and_utc())
-}
-
-// Removes trailing brackets from a string. Eg. helloworld[xxxx] -> helloworld
-fn remove_last_bracketed(s: &str) -> &str {
-    if let Some(pos) = s.rfind('[') {
-        return &s[..pos];
-    }
-    s
-}
-
 impl<'a> Parseable<'a> for LedgerBal {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
         let mut ledger_balance = Self {
@@ -440,11 +402,13 @@ impl<'a> Parseable<'a> for Stmttrn {
                 }
                 "TRNAMT" => {
                     if let Some(trans_amount) = tokens.next() {
-                        s_trans_amount = Some(
-                            trans_amount
-                                .parse::<f64>()
-                                .map_err(|_| QFXParsingError::InvalidTransactionAmount())?,
-                        );
+                        // TODO: This seems to parse unrepresentable values too. Figure out a way to properly parse the values.
+                        s_trans_amount = Some(trans_amount.parse::<f64>().map_err(|_| {
+                            QFXParsingError::InvalidTransactionAmount(format!(
+                                "Invalid transaction amount {}",
+                                trans_amount
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the TRNAMT token in STMTTRN".to_string(),
@@ -537,120 +501,254 @@ impl<'a> Parseable<'a> for Stmttrn {
     }
 }
 
-// TODO: TESTING: My bank gives a correct fit-id for some transactions even though it points to itself. Handle this gracefully.
+// Parses a date time in the OFX standard format. Expects something like: 20250725143000[+7:PDT], 20250725T143000[+7:PDT], 20250725T143000Z, 20250725143000
+// TODO: For the time being this will ignore the timezone at the end and treat everything in UTC time. %Z in chrono
+// does not have the concept of timezones because it claims ambiguitiy (CST = China Standard Time or Central Standard Time)
+fn parse_ofx_datetime(s: &str) -> Result<DateTime<Utc>, ParseError> {
+    // Remove the ending [0:PDT] stuff.
+    let mut s = remove_last_bracketed(s);
+    s = s.strip_suffix("Z").unwrap_or(s);
 
+    // Attempt to parse with milliseconds
+    let format_with_tz_ms = "%Y%m%d%H%M%S%.f";
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format_with_tz_ms) {
+        return Ok(dt.and_utc());
+    }
+
+    let format_with_tz_ms = "%Y%m%dT%H%M%S%.f";
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format_with_tz_ms) {
+        return Ok(dt.and_utc());
+    }
+
+    // Attempt to parse without any time information
+    let format_with_tz_ms = "%Y%m%dT%H%M%S";
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, format_with_tz_ms) {
+        return Ok(dt.and_utc());
+    }
+
+    // Attempt to parse with a seconds granularity
+    let format_with_s = "%Y%m%d%H%M%S";
+    NaiveDateTime::parse_from_str(s, format_with_s).map(|dt| dt.and_utc())
+}
+
+// Removes trailing brackets from a string. Eg. helloworld[xxxx] -> helloworld
+fn remove_last_bracketed(s: &str) -> &str {
+    if let Some(pos) = s.rfind('[') {
+        return &s[..pos];
+    }
+    s
+}
+
+// TODO: TESTING: My bank gives a correct fit-id for some transactions even though it points to itself. Handle this gracefully.
 #[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Timelike};
+mod datetime_tests {
+    use chrono::TimeZone;
 
     use super::*;
 
-    fn parse_stmttrn_from_tokens(tokens: Vec<&str>) -> Result<Stmttrn, QFXParsingError> {
-        let mut iter = tokens.into_iter();
-        Stmttrn::parse(&mut iter)
+    #[test]
+    fn test_datetime_parser_valid_basic() {
+        // Basic OFX datetime without timezone or T
+        let dt = parse_ofx_datetime("20250725143000").unwrap();
+        let correct_dt = Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap();
+        assert_eq!(dt, correct_dt);
     }
 
     #[test]
-    fn test_stmttrn_invalidvalid_datetime() {
-        let tokens = vec![
-            "TRNTYPE",
-            "DEBIT",
-            "DTPOSTED",
-            "202440101T123456Z",
-            "TRNAMT",
-            "-50.25",
-            "FITID",
-            "12345",
-            "NAME",
-            "Test Transaction",
-            "/STMTTRN",
-        ];
-        let stmttrn = parse_stmttrn_from_tokens(tokens);
-        assert!(matches!(
-            stmttrn,
-            Err(QFXParsingError::UnexpectedDateFormat())
-        ));
+    fn test_datetime_parser_valid_with_t() {
+        // OFX datetime with T separator
+        let dt = parse_ofx_datetime("20250725T143000").unwrap();
+        let correct_dt = Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap();
+        assert_eq!(dt, correct_dt);
     }
 
     #[test]
-    fn test_stmttrn_invalid_datetime_short() {
-        let tokens = vec![
-            "TRNTYPE",
-            "CREDIT",
-            "DTPOSTED",
-            "20240101",
-            "TRNAMT",
-            "100.00",
-            "FITID",
-            "54321",
-            "NAME",
-            "Short Date",
-            "/STMTTRN",
-        ];
-        let stmttrn = parse_stmttrn_from_tokens(tokens);
-        assert!(
-            stmttrn.is_err(),
-            "Parsing datetime of format 20240101 succeeded unexpectedly"
-        );
+    fn test_datetime_parser_valid_with_z() {
+        // OFX datetime with Z suffix
+        let dt = parse_ofx_datetime("20250725T143000Z").unwrap();
+        let correct_dt = Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap();
+        assert_eq!(dt, correct_dt);
     }
 
     #[test]
-    fn test_stmttrn_valid_datetime_with_offset() {
-        // TODO: This should parse correctly but just interpret the time in UTC
-        let tokens = vec![
-            "TRNTYPE",
-            "CREDIT",
-            "DTPOSTED",
-            "20240101T123456[-5:EST]",
-            "TRNAMT",
-            "200.00",
-            "FITID",
-            "67890",
-            "NAME",
-            "Offset Date",
-            "/STMTTRN",
-        ];
-        let stmttrn = parse_stmttrn_from_tokens(tokens);
-        assert!(
-            stmttrn.is_ok(),
-            "Parsing datetime of format 20240101T123456[-5:EST] failed"
-        );
-        let stmttrn = stmttrn.unwrap();
-        // The parser should convert to UTC
+    fn test_datetime_parser_valid_with_bracketed() {
+        // OFX datetime with bracketed timezone info
+        let dt = parse_ofx_datetime("20250725143000[+7:PDT]").unwrap();
+        let correct_dt = Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap();
+        assert_eq!(dt, correct_dt);
+    }
+
+    #[test]
+    fn test_datetime_parser_valid_with_t_and_bracketed() {
+        // OFX datetime with T and bracketed timezone info
+        let dt = parse_ofx_datetime("20250725T143000[+7:PDT]").unwrap();
+        let correct_dt = Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap();
+        assert_eq!(dt, correct_dt);
+    }
+
+    #[test]
+    fn test_datetime_parser_invalid() {
+        // Invalid format should return error
+        let dt = parse_ofx_datetime("invalid-date-string");
+        assert!(dt.is_err());
+    }
+}
+
+/// Module to test the Stmttrn type
+#[cfg(test)]
+mod stmttrn_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    // Helper tokenizer for test input strings
+    fn tokenize(input: &str) -> impl Iterator<Item = &str> {
+        input
+            .split(['<', '>'].as_ref())
+            .filter(|x| !x.trim().is_empty())
+    }
+
+    #[test]
+    fn test_stmttrn_parse_valid_minimal() {
+        let input = "\
+                <TRNTYPE>DEBIT\
+                <DTPOSTED>20250725T143000Z\
+                <TRNAMT>-100.51\
+                <FITID>12345\
+                <NAME>Test Transaction\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens).unwrap();
+        assert_eq!(stmttrn.trans_type, "DEBIT");
         assert_eq!(
             stmttrn.dt_posted,
-            Utc.with_ymd_and_hms(2024, 1, 1, 12, 34, 56).unwrap()
+            Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap()
         );
+        assert_eq!(stmttrn.trans_amount, -100.51);
+        assert_eq!(stmttrn.fit_id, "12345");
+        assert_eq!(stmttrn.name, "Test Transaction");
+        assert!(stmttrn.memo.is_none());
+        assert!(stmttrn.correct_fit_id.is_none());
+        assert!(stmttrn.correct_action.is_none());
     }
 
     #[test]
-    fn test_stmttrn_valid_datetime_with_fractional_seconds() {
-        let tokens = vec![
-            "TRNTYPE",
-            "CREDIT",
-            "DTPOSTED",
-            "20240101T123456.789Z",
-            "TRNAMT",
-            "300.00",
-            "FITID",
-            "98765",
-            "NAME",
-            "Fractional Seconds",
-            "/STMTTRN",
-        ];
-        let stmttrn = parse_stmttrn_from_tokens(tokens);
-        assert!(
-            stmttrn.is_ok(),
-            "Parsing datetime of format 20240101T123456.789Z failed {:?}",
-            stmttrn.err()
-        );
-        let stmttrn = stmttrn.unwrap();
-        assert_eq!(
-            stmttrn.dt_posted,
-            Utc.with_ymd_and_hms(2024, 01, 01, 12, 34, 56)
-                .unwrap()
-                .with_nanosecond(789000000)
-                .unwrap()
-        );
+    fn test_stmttrn_parse_invalid_transaction() {
+        let input = "\
+                <TRNTYPE>DEBIT\
+                <DTPOSTED>20250725T143000Z\
+                <TRNAMT>100123456-7891\
+                <FITID>12345\
+                <NAME>Test Transaction\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens);
+        assert!(stmttrn.is_err());
+        if let Err(e) = stmttrn {
+            assert!(
+                matches!(e, QFXParsingError::InvalidTransactionAmount(_)),
+                "Expected InvalidTransactionAmount error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_stmttrn_parse_missing_transaction() {
+        let input = "\
+                <TRNTYPE>DEBIT\
+                <DTPOSTED>20250725T143000Z\
+                <FITID>12345\
+                <NAME>Test Transaction\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens);
+        assert!(stmttrn.is_err());
+        if let Err(e) = stmttrn {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_stmttrn_parse_missing_date_posted() {
+        let input = "\
+                <TRNTYPE>DEBIT\
+                <TRNAMT>1001237891\
+                <FITID>12345\
+                <NAME>Test Transaction\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens);
+        assert!(stmttrn.is_err());
+        if let Err(e) = stmttrn {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_stmttrn_parse_missing_name() {
+        let input = "\
+                <TRNTYPE>DEBIT\
+                <DTPOSTED>20250725T143000Z\
+                <TRNAMT>1001237891\
+                <FITID>12345\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens);
+        assert!(stmttrn.is_err());
+        if let Err(e) = stmttrn {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_stmttrn_parse_missing_fitid() {
+        let input = "\
+                <TRNTYPE>DEBIT\
+                <DTPOSTED>20250725T143000Z\
+                <TRNAMT>1001237891\
+                <NAME>Test Transaction\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens);
+        assert!(stmttrn.is_err());
+        if let Err(e) = stmttrn {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_stmttrn_parse_missing_transaction_type() {
+        let input = "\
+                <DTPOSTED>20250725T143000Z\
+                <TRNAMT>1001237891\
+                <FITID>12345\
+                <NAME>Test Transaction\
+            </STMTTRN>";
+        let mut tokens = tokenize(input);
+        let stmttrn = Stmttrn::parse(&mut tokens);
+        assert!(stmttrn.is_err());
+        if let Err(e) = stmttrn {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
     }
 }
