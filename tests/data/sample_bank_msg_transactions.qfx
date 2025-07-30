@@ -1,0 +1,76 @@
+OFXHEADER:100
+DATA:OFXSGML
+VERSION:102
+SECURITY:NONE
+ENCODING:USASCII
+CHARSET:1252
+COMPRESSION:NONE
+OLDFILEUID:NONE
+NEWFILEUID:20250730001
+
+<OFX>
+  <SIGNONMSGSRSV1>
+    <SONRS>
+      <STATUS>
+        <CODE>0
+        <SEVERITY>INFO
+        <MESSAGE>Login successful
+      </STATUS>
+      <DTSERVER>20250730080000
+      <LANGUAGE>ENG
+      <INTU.BID>01234
+      <FI>
+        <ORG>BankOfExample
+        <FID>56789
+      </FI>
+      <SESSCOOKIE>Session-ABC123
+    </SONRS>
+  </SIGNONMSGSRSV1>
+
+  <BANKMSGSRSV1>
+    <STMTTRNRS>
+      <TRNUID>1001
+      <STATUS>
+        <CODE>0
+        <SEVERITY>INFO
+      </STATUS>
+      <STMTRS>
+        <CURDEF>USD
+        <BANKACCTFROM>
+          <BANKID>123456789
+          <ACCTID>987654321
+          <ACCTTYPE>CHECKING
+        </BANKACCTFROM>
+        <BANKTRANLIST>
+          <DTSTART>20250701000000
+          <DTEND>20250730235959
+          <STMTTRN>
+            <TRNTYPE>DEBIT
+            <DTPOSTED>20250715080000
+            <TRNAMT>-55.75
+            <FITID>TXN123456
+            <CHECKNUM>1005
+            <NAME>GROCERY STORE
+            <MEMO>Weekly groceries
+          </STMTTRN>
+          <STMTTRN>
+            <TRNTYPE>CREDIT
+            <DTPOSTED>20250716090000
+            <TRNAMT>1000.00
+            <FITID>TXN123457
+            <NAME>PAYROLL
+            <MEMO>DIRECT DEPOSIT
+          </STMTTRN>
+        </BANKTRANLIST>
+        <LEDGERBAL>
+          <BALAMT>3244.25
+          <DTASOF>20250730235959
+        </LEDGERBAL>
+        <AVAILBAL>
+          <BALAMT>3500.00
+          <DTASOF>20250730235959
+        </AVAILBAL>
+      </STMTRS>
+    </STMTTRNRS>
+  </BANKMSGSRSV1>
+</OFX>

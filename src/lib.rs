@@ -27,6 +27,10 @@ pub enum QFXParsingError {
     UnexpectedDateFormat(),
     #[error("Missing a required value in the QFX file")]
     InvalidTransactionAmount(String),
+    #[error("File not found")]
+    FileNotFound(String),
+    #[error("File read error")]
+    FileReadError(String),
 }
 
 pub(crate) trait Parseable<'a> {
@@ -39,7 +43,7 @@ pub(crate) trait Parseable<'a> {
 
 #[derive(Clone)]
 /// TODO: More types will need to be supported later
-pub struct OFX {
+pub struct QFX {
     pub sign_on_msg_srs_v1: Option<SignOnMsgSrsV1>,
     pub credit_card_msg_srs_v1: Option<CCMsgSrsV1>,
     pub bank_msg_srs_v1: Option<BankMsgSrsV1>,
@@ -66,8 +70,8 @@ pub struct AvailableBalance {
 
 #[derive(Clone)]
 pub struct BankTranList {
-    pub dt_start: Option<String>,
-    pub dt_end: Option<String>,
+    pub dt_start: DateTime<Utc>,
+    pub dt_end: DateTime<Utc>,
     pub transactions: Vec<Stmttrn>, // TODO: Should not have pub(crate) visibility
 }
 
@@ -81,16 +85,18 @@ pub struct Stmttrn {
     pub correct_action: Option<String>,
     pub name: String,
     pub memo: Option<String>,
+    pub check_num: Option<String>, // Should only be used with CHECK or DEBIT transactions
 }
 
-impl OFX {
+impl QFX {
     // Generate
     pub fn new_from_file(file_path: &str) -> Result<Self, QFXParsingError> {
         // TODO: Add some validation for the file along with some logging to know what is going on
-        let mut file = File::open(file_path).expect("Unable to open the file");
+        let mut file =
+            File::open(file_path).map_err(|e| QFXParsingError::FileNotFound(e.to_string()))?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)
-            .expect("Unable to read the file");
+            .map_err(|e| QFXParsingError::FileReadError(e.to_string()))?;
 
         // Find the starting <OFX> tag and remove everything before it.
         // TODO: The information before that tag might actually be useful!
@@ -102,17 +108,16 @@ impl OFX {
             ));
         }
 
-        // Tabs, newline, whitespace etc can be removed
-        contents.retain(|c| !c.is_whitespace());
         // Tokenize on the <> tags and iterate over the vector that is produced.
         // TODO: VULNERABLE TO CODE INJECTION OR SOMETHING LIKE THAT? LOOK IN TO A BETTER APPROACH!
         let output_tokens = contents.split(['<', '>'].as_ref());
+        let output_tokens = output_tokens.map(|x| x.trim());
         let output = output_tokens.filter(|x| *x != "");
         let mut tokens = output.into_iter();
         while let Some(contents) = tokens.next() {
             match contents {
                 "OFX" => {
-                    return Ok(OFX::parse(&mut tokens)?);
+                    return Ok(QFX::parse(&mut tokens)?);
                 }
                 _ => {
                     // Error case, unknown token seen
@@ -130,9 +135,9 @@ impl OFX {
     }
 }
 
-impl<'a> Parseable<'a> for OFX {
+impl<'a> Parseable<'a> for QFX {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut qfx = OFX {
+        let mut qfx = QFX {
             sign_on_msg_srs_v1: None,
             credit_card_msg_srs_v1: None,
             bank_msg_srs_v1: None,
@@ -164,7 +169,7 @@ impl<'a> Parseable<'a> for OFX {
                 }
                 _ => {
                     return Err(QFXParsingError::UnexpectedToken(format!(
-                        "Found unexpected input. Expected Token: /OFX, Found Token: {}",
+                        "Found unexpected input in the OFX tag, Found Token: {}",
                         contents.to_string()
                     )));
                 }
@@ -319,16 +324,17 @@ impl<'a> Parseable<'a> for AvailableBalance {
 
 impl<'a> Parseable<'a> for BankTranList {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut bank_transactions_list = Self {
-            dt_start: None,
-            dt_end: None,
-            transactions: vec![],
-        };
+        let mut s_dt_start: Option<DateTime<Utc>> = None;
+        let mut s_dt_end: Option<DateTime<Utc>> = None;
+        let mut s_transactions: Vec<Stmttrn> = vec![];
         while let Some(contents) = tokens.next() {
             match contents {
                 "DTSTART" => {
                     if let Some(dt_start) = tokens.next() {
-                        bank_transactions_list.dt_start = Some(dt_start.to_string());
+                        s_dt_start = Some(
+                            parse_ofx_datetime(dt_start)
+                                .map_err(|_| QFXParsingError::UnexpectedDateFormat())?,
+                        );
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTSTART token".to_string(),
@@ -337,7 +343,10 @@ impl<'a> Parseable<'a> for BankTranList {
                 }
                 "DTEND" => {
                     if let Some(dt_end) = tokens.next() {
-                        bank_transactions_list.dt_end = Some(dt_end.to_string());
+                        s_dt_end = Some(
+                            parse_ofx_datetime(dt_end)
+                                .map_err(|_| QFXParsingError::UnexpectedDateFormat())?,
+                        );
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTEND token".to_string(),
@@ -345,12 +354,18 @@ impl<'a> Parseable<'a> for BankTranList {
                     }
                 }
                 "STMTTRN" => {
-                    bank_transactions_list
-                        .transactions
-                        .push(Stmttrn::parse(tokens)?);
+                    s_transactions.push(Stmttrn::parse(tokens)?);
                 }
                 "/BANKTRANLIST" => {
-                    return Ok(bank_transactions_list);
+                    return Ok(Self {
+                        dt_start: s_dt_start.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing DTSTART in BANKTRANLIST".to_string(),
+                        ))?,
+                        dt_end: s_dt_end.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing DTEND in BANKTRANLIST".to_string(),
+                        ))?,
+                        transactions: s_transactions,
+                    });
                 }
                 _ => {
                     // Error case, unknown token seen
@@ -377,6 +392,7 @@ impl<'a> Parseable<'a> for Stmttrn {
         let mut s_name: Option<String> = None;
         let mut s_memo: Option<String> = None;
         let mut s_correct_action: Option<String> = None;
+        let mut s_check_num: Option<String> = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "TRNTYPE" => {
@@ -462,6 +478,15 @@ impl<'a> Parseable<'a> for Stmttrn {
                         ));
                     }
                 }
+                "CHECKNUM" => {
+                    if let Some(check_num) = tokens.next() {
+                        s_check_num = Some(check_num.to_string());
+                    } else {
+                        return Err(QFXParsingError::UnexpectedEOF(
+                            "Expected token following the CHECKNUM token in STMTTRN".to_string(),
+                        ));
+                    }
+                }
                 "/STMTTRN" => {
                     return Ok(Self {
                         trans_type: s_trans_type.ok_or(QFXParsingError::MissingRequiredValue(
@@ -484,6 +509,7 @@ impl<'a> Parseable<'a> for Stmttrn {
                             "NAME value is required in STMTRN".to_string(),
                         ))?,
                         memo: s_memo,
+                        check_num: s_check_num,
                     });
                 }
                 _ => {
@@ -615,6 +641,7 @@ mod stmttrn_tests {
                 <TRNAMT>-100.51\
                 <FITID>12345\
                 <NAME>Test Transaction\
+                <CHECKNUM>1001\
             </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens).unwrap();
@@ -639,6 +666,7 @@ mod stmttrn_tests {
                 <TRNAMT>100123456-7891\
                 <FITID>12345\
                 <NAME>Test Transaction\
+                <CHECKNUM>1001\
             </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
@@ -750,5 +778,77 @@ mod stmttrn_tests {
                 e
             );
         }
+    }
+}
+#[cfg(test)]
+mod qfx_file_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_qfx_parse_valid_file() {
+        let file_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/sample_bank_msg_transactions.qfx"
+        );
+        println!("{}", file_path);
+        let result = QFX::new_from_file(file_path);
+        assert!(
+            result.is_ok(),
+            "Expected QFX::new_from_file to succeed, got error: {:?}",
+            result.err()
+        );
+        let qfx = result.unwrap();
+        // Optionally, check that at least one of the main sections is present
+        assert!(
+            qfx.sign_on_msg_srs_v1.is_some()
+                || qfx.credit_card_msg_srs_v1.is_none()
+                || qfx.bank_msg_srs_v1.is_some(),
+            "Expected at least one section to be present in parsed QFX"
+        );
+
+        let transactions = qfx
+            .bank_msg_srs_v1
+            .unwrap()
+            .stmttrns
+            .stmtrs
+            .banktranslist
+            .transactions;
+        assert_eq!(transactions.len(), 2);
+
+        // First transaction
+        let t0 = &transactions[0];
+        assert_eq!(t0.trans_type, "DEBIT");
+        assert_eq!(
+            t0.dt_posted,
+            chrono::Utc.with_ymd_and_hms(2025, 7, 15, 8, 0, 0).unwrap()
+        );
+        assert_eq!(t0.trans_amount, -55.75);
+        assert_eq!(t0.fit_id, "TXN123456");
+        assert_eq!(t0.check_num, Some("1005".to_string()));
+        assert_eq!(t0.name, "GROCERY STORE");
+        assert_eq!(t0.memo, Some("Weekly groceries".to_string()));
+
+        // Second transaction
+        let t1 = &transactions[1];
+        assert_eq!(t1.trans_type, "CREDIT");
+        assert_eq!(
+            t1.dt_posted,
+            chrono::Utc.with_ymd_and_hms(2025, 7, 16, 9, 0, 0).unwrap()
+        );
+        assert_eq!(t1.trans_amount, 1000.00);
+        assert_eq!(t1.fit_id, "TXN123457");
+        assert_eq!(t1.check_num, None);
+        assert_eq!(t1.name, "PAYROLL");
+        assert_eq!(t1.memo, Some("DIRECT DEPOSIT".to_string()));
+    }
+
+    #[test]
+    fn test_qfx_parse_missing_file() {
+        let result = QFX::new_from_file("tests/data/does_not_exist.qfx");
+        assert!(
+            result.is_err(),
+            "Expected error when parsing non-existent file"
+        );
     }
 }
