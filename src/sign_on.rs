@@ -10,37 +10,41 @@ use chrono::Utc;
 
 #[derive(Clone)]
 pub struct SignOnMsgSrsV1 {
-    sonrs: Option<Sonrs>,
+    pub sonrs: Sonrs,
 }
 
 #[derive(Clone)]
 pub struct Sonrs {
-    status: Option<Status>,
-    fi: FinancialInstitution,
-    bid: Option<String>,
-    dt_server: DateTime<Utc>, // TODO: Should be using the DateTime parser for this part
-    dt_acctup: Option<String>,
-    language: Option<String>,
-    cookie: Option<String>,
-    user_id: Option<String>,
+    pub status: Option<Status>,
+    pub fi: FinancialInstitution,
+    pub bid: Option<String>,
+    pub dt_server: DateTime<Utc>, // TODO: Should be using the DateTime parser for this part
+    pub dt_acctup: Option<String>,
+    pub language: Option<String>,
+    pub cookie: Option<String>,
+    pub user_id: Option<String>,
 }
 
 #[derive(Clone)]
-pub(crate) struct FinancialInstitution {
-    pub(crate) org: Option<String>,
-    pub(crate) fid: Option<String>, // TODO: Needs to be numeric
+pub struct FinancialInstitution {
+    pub org: String,
+    pub fid: String, // TODO: Needs to be numeric
 }
 
 impl<'a> Parseable<'a> for SignOnMsgSrsV1 {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut sign_on_msg_srs_v1 = Self { sonrs: None };
+        let mut s_sonrs = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "SONRS" => {
-                    sign_on_msg_srs_v1.sonrs = Some(Sonrs::parse(tokens)?);
+                    s_sonrs = Some(Sonrs::parse(tokens)?);
                 }
                 "/SIGNONMSGSRSV1" => {
-                    return Ok(sign_on_msg_srs_v1);
+                    return Ok(Self {
+                        sonrs: s_sonrs.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing value SONRS in SIGNONMSGSRSV1".to_string(),
+                        ))?,
+                    });
                 }
                 _ => {
                     // Error case, unknown token seen
@@ -152,7 +156,6 @@ impl<'a> Parseable<'a> for Sonrs {
                 }
                 _ => {
                     // Unknown token
-                    // TODO: Need better error parsing
                     return Err(QFXParsingError::UnexpectedToken(format!(
                         "Found unexpected token {} in the SONRS type",
                         contents.to_string()
@@ -168,15 +171,13 @@ impl<'a> Parseable<'a> for Sonrs {
 
 impl<'a> Parseable<'a> for FinancialInstitution {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut fi = Self {
-            org: None,
-            fid: None,
-        };
+        let mut s_org = None;
+        let mut s_fid = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "ORG" => {
                     if let Some(severity) = tokens.next() {
-                        fi.org = Some(severity.to_string());
+                        s_org = Some(severity.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the ORG token".to_string(),
@@ -185,7 +186,7 @@ impl<'a> Parseable<'a> for FinancialInstitution {
                 }
                 "FID" => {
                     if let Some(fid) = tokens.next() {
-                        fi.fid = Some(fid.to_string());
+                        s_fid = Some(fid.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the FIT token".to_string(),
@@ -193,7 +194,14 @@ impl<'a> Parseable<'a> for FinancialInstitution {
                     }
                 }
                 "/FI" => {
-                    return Ok(fi);
+                    return Ok(Self {
+                        org: s_org.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing ORG in FI".to_string(),
+                        ))?,
+                        fid: s_fid.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing FID in FI".to_string(),
+                        ))?,
+                    });
                 }
                 _ => {
                     return Err(QFXParsingError::UnexpectedToken(format!(
