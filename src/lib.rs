@@ -23,8 +23,8 @@ pub enum QFXParsingError {
     UnexpectedEOF(String),
     #[error("Missing a required value in the QFX file")]
     MissingRequiredValue(String),
-    #[error("Missing a required value in the QFX file")]
-    UnexpectedDateFormat(),
+    #[error("Found an unexpected datetime format in the qfx file")]
+    UnexpectedDateFormat(String),
     #[error("Missing a required value in the QFX file")]
     InvalidTransactionAmount(String),
     #[error("File not found")]
@@ -51,28 +51,28 @@ pub struct QFX {
 
 #[derive(Clone)]
 pub struct Status {
-    pub code: Option<String>,
-    pub severity: Option<String>,
+    pub code: String,
+    pub severity: String,
     pub message: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct LedgerBal {
-    pub balance_amount: Option<String>,
-    pub dt_as_of: Option<String>,
+    pub balance_amount: String,
+    pub dt_as_of: DateTime<Utc>,
 }
 
 #[derive(Clone)]
 pub struct AvailableBalance {
-    pub balance_amount: Option<String>,
-    pub dt_as_of: Option<String>,
+    pub balance_amount: String,
+    pub dt_as_of: DateTime<Utc>,
 }
 
 #[derive(Clone)]
 pub struct BankTranList {
     pub dt_start: DateTime<Utc>,
     pub dt_end: DateTime<Utc>,
-    pub transactions: Vec<Stmttrn>, // TODO: Should not have pub(crate) visibility
+    pub transactions: Vec<Stmttrn>,
 }
 
 #[derive(Clone)]
@@ -108,12 +108,7 @@ impl QFX {
             ));
         }
 
-        // Tokenize on the <> tags and iterate over the vector that is produced.
-        // TODO: VULNERABLE TO CODE INJECTION OR SOMETHING LIKE THAT? LOOK IN TO A BETTER APPROACH!
-        let output_tokens = contents.split(['<', '>'].as_ref());
-        let output_tokens = output_tokens.map(|x| x.trim());
-        let output = output_tokens.filter(|x| *x != "");
-        let mut tokens = output.into_iter();
+        let mut tokens = tokenize(&contents);
         while let Some(contents) = tokens.next() {
             match contents {
                 "OFX" => {
@@ -183,24 +178,22 @@ impl<'a> Parseable<'a> for QFX {
 
 impl<'a> Parseable<'a> for Status {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut status = Self {
-            code: None,
-            severity: None,
-            message: None,
-        };
+        let mut s_code = None;
+        let mut s_severity = None;
+        let mut s_message = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "CODE" => {
                     if let Some(code) = tokens.next() {
                         // TODO: What if there is no other stuff? Should error out.
-                        status.code = Some(code.to_string());
+                        s_code = Some(code.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF("Expected token following the CODE token in the STATUS type of CREDITCARDMSGSRSV1".to_string()));
                     }
                 }
                 "SEVERITY" => {
                     if let Some(severity) = tokens.next() {
-                        status.severity = Some(severity.to_string());
+                        s_severity = Some(severity.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the SEVERITY token in the STATUS type"
@@ -210,7 +203,7 @@ impl<'a> Parseable<'a> for Status {
                 }
                 "MESSAGE" => {
                     if let Some(message) = tokens.next() {
-                        status.message = Some(message.to_string());
+                        s_message = Some(message.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the MESSAGE token in the STATUS type"
@@ -219,7 +212,15 @@ impl<'a> Parseable<'a> for Status {
                     }
                 }
                 "/STATUS" => {
-                    return Ok(status);
+                    return Ok(Self {
+                        code: s_code.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing CODE in STATUS".to_string(),
+                        ))?,
+                        severity: s_severity.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing SEVERITY in STATUS".to_string(),
+                        ))?,
+                        message: s_message,
+                    });
                 }
                 _ => {
                     // Error case, unknown token seen
@@ -236,24 +237,27 @@ impl<'a> Parseable<'a> for Status {
 
 impl<'a> Parseable<'a> for LedgerBal {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut ledger_balance = Self {
-            balance_amount: None,
-            dt_as_of: None,
-        };
+        let mut s_balance_amount = None;
+        let mut s_dt_as_of = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "BALAMT" => {
                     if let Some(balance_amount) = tokens.next() {
-                        ledger_balance.balance_amount = Some(balance_amount.to_string());
+                        s_balance_amount = Some(balance_amount.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
-                            "Expected token following the BALAMT token".to_string(),
+                            "Expected value following BALAMT in LEDGERBAL".to_string(),
                         ));
                     }
                 }
                 "DTASOF" => {
                     if let Some(dt_as_of) = tokens.next() {
-                        ledger_balance.dt_as_of = Some(dt_as_of.to_string());
+                        s_dt_as_of = Some(parse_ofx_datetime(dt_as_of).map_err(|e| {
+                            QFXParsingError::UnexpectedDateFormat(format!(
+                                "Failed to parse datetime for DTASOF with {}",
+                                e
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTASOF token".to_string(),
@@ -261,7 +265,16 @@ impl<'a> Parseable<'a> for LedgerBal {
                     }
                 }
                 "/LEDGERBAL" => {
-                    return Ok(ledger_balance);
+                    return Ok(Self {
+                        balance_amount: s_balance_amount.ok_or(
+                            QFXParsingError::MissingRequiredValue(
+                                "Missing BALAMT in LEDGERBAL".to_string(),
+                            ),
+                        )?,
+                        dt_as_of: s_dt_as_of.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing DTASOF in LEDGERBAL".to_string(),
+                        ))?,
+                    });
                 }
                 _ => {
                     // Error case, unknown token seen
@@ -273,22 +286,20 @@ impl<'a> Parseable<'a> for LedgerBal {
             }
         }
         return Err(QFXParsingError::UnexpectedEOF(
-            "Found unexpected EOF. Was still expecting the '/LEDGERBAL' token".to_string(),
+            "Found unexpected EOF. Was still expecting the '/AVAILBAL' token".to_string(),
         ));
     }
 }
 
 impl<'a> Parseable<'a> for AvailableBalance {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut available_balance = Self {
-            balance_amount: None,
-            dt_as_of: None,
-        };
+        let mut s_balance_amount = None;
+        let mut s_dt_as_of = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "BALAMT" => {
                     if let Some(balance_amount) = tokens.next() {
-                        available_balance.balance_amount = Some(balance_amount.to_string());
+                        s_balance_amount = Some(balance_amount.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the BALAMT token".to_string(),
@@ -297,7 +308,12 @@ impl<'a> Parseable<'a> for AvailableBalance {
                 }
                 "DTASOF" => {
                     if let Some(dt_as_of) = tokens.next() {
-                        available_balance.dt_as_of = Some(dt_as_of.to_string());
+                        s_dt_as_of = Some(parse_ofx_datetime(dt_as_of).map_err(|e| {
+                            QFXParsingError::UnexpectedDateFormat(format!(
+                                "Failed to parse datetime for DTASOF with {}",
+                                e
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTASOF token".to_string(),
@@ -305,7 +321,16 @@ impl<'a> Parseable<'a> for AvailableBalance {
                     }
                 }
                 "/AVAILBAL" => {
-                    return Ok(available_balance);
+                    return Ok(Self {
+                        balance_amount: s_balance_amount.ok_or(
+                            QFXParsingError::MissingRequiredValue(
+                                "Missing BALAMT in AVAILBAL".to_string(),
+                            ),
+                        )?,
+                        dt_as_of: s_dt_as_of.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Missing DTASOF in AVAILBAL".to_string(),
+                        ))?,
+                    });
                 }
                 _ => {
                     // Error case, unknown token seen
@@ -331,10 +356,12 @@ impl<'a> Parseable<'a> for BankTranList {
             match contents {
                 "DTSTART" => {
                     if let Some(dt_start) = tokens.next() {
-                        s_dt_start = Some(
-                            parse_ofx_datetime(dt_start)
-                                .map_err(|_| QFXParsingError::UnexpectedDateFormat())?,
-                        );
+                        s_dt_start = Some(parse_ofx_datetime(dt_start).map_err(|e| {
+                            QFXParsingError::UnexpectedDateFormat(format!(
+                                "Failed to parse datetime for DTSTART with {}",
+                                e
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTSTART token".to_string(),
@@ -343,10 +370,12 @@ impl<'a> Parseable<'a> for BankTranList {
                 }
                 "DTEND" => {
                     if let Some(dt_end) = tokens.next() {
-                        s_dt_end = Some(
-                            parse_ofx_datetime(dt_end)
-                                .map_err(|_| QFXParsingError::UnexpectedDateFormat())?,
-                        );
+                        s_dt_end = Some(parse_ofx_datetime(dt_end).map_err(|e| {
+                            QFXParsingError::UnexpectedDateFormat(format!(
+                                "Failed to parse datetime for DTEND with {}",
+                                e
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTEND token".to_string(),
@@ -406,10 +435,12 @@ impl<'a> Parseable<'a> for Stmttrn {
                 }
                 "DTPOSTED" => {
                     if let Some(dt_posted) = tokens.next() {
-                        s_dt_posted = Some(
-                            parse_ofx_datetime(dt_posted)
-                                .map_err(|_| QFXParsingError::UnexpectedDateFormat())?,
-                        );
+                        s_dt_posted = Some(parse_ofx_datetime(dt_posted).map_err(|e| {
+                            QFXParsingError::UnexpectedDateFormat(format!(
+                                "Failed to parse datetime for DTPOSTED with {}",
+                                e
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTPOSTED token in STMTTRN".to_string(),
@@ -565,12 +596,21 @@ fn remove_last_bracketed(s: &str) -> &str {
     s
 }
 
+// Helper tokenizer for input strings
+fn tokenize(input: &str) -> impl Iterator<Item = &str> {
+    // Tokenize on the <> tags and iterate over the vector that is produced.
+    // TODO: VULNERABLE TO CODE INJECTION OR SOMETHING LIKE THAT? LOOK IN TO A BETTER APPROACH!
+    input
+        .split(['<', '>'].as_ref())
+        .map(|x| x.trim())
+        .filter(|x| !x.is_empty())
+}
+
 // TODO: TESTING: My bank gives a correct fit-id for some transactions even though it points to itself. Handle this gracefully.
 #[cfg(test)]
 mod datetime_tests {
-    use chrono::TimeZone;
-
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn test_datetime_parser_valid_basic() {
@@ -625,13 +665,6 @@ mod datetime_tests {
 mod stmttrn_tests {
     use super::*;
     use chrono::TimeZone;
-
-    // Helper tokenizer for test input strings
-    fn tokenize(input: &str) -> impl Iterator<Item = &str> {
-        input
-            .split(['<', '>'].as_ref())
-            .filter(|x| !x.trim().is_empty())
-    }
 
     #[test]
     fn test_stmttrn_parse_valid_minimal() {
@@ -780,6 +813,7 @@ mod stmttrn_tests {
         }
     }
 }
+
 #[cfg(test)]
 mod qfx_file_tests {
     use super::*;
@@ -807,17 +841,17 @@ mod qfx_file_tests {
             "Expected at least one section to be present in parsed QFX"
         );
 
-        let transactions = qfx
+        let bank_transactions = qfx
             .bank_msg_srs_v1
             .unwrap()
             .stmttrns
             .stmtrs
             .banktranslist
             .transactions;
-        assert_eq!(transactions.len(), 2);
+        assert_eq!(bank_transactions.len(), 2);
 
         // First transaction
-        let t0 = &transactions[0];
+        let t0 = &bank_transactions[0];
         assert_eq!(t0.trans_type, "DEBIT");
         assert_eq!(
             t0.dt_posted,
@@ -830,7 +864,42 @@ mod qfx_file_tests {
         assert_eq!(t0.memo, Some("Weekly groceries".to_string()));
 
         // Second transaction
-        let t1 = &transactions[1];
+        let t1 = &bank_transactions[1];
+        assert_eq!(t1.trans_type, "CREDIT");
+        assert_eq!(
+            t1.dt_posted,
+            chrono::Utc.with_ymd_and_hms(2025, 7, 16, 9, 0, 0).unwrap()
+        );
+        assert_eq!(t1.trans_amount, 1000.00);
+        assert_eq!(t1.fit_id, "TXN123457");
+        assert_eq!(t1.check_num, None);
+        assert_eq!(t1.name, "PAYROLL");
+        assert_eq!(t1.memo, Some("DIRECT DEPOSIT".to_string()));
+
+        let cc_transactions = qfx
+            .credit_card_msg_srs_v1
+            .unwrap()
+            .ccstmttrns
+            .ccstmtrs
+            .banktranslist
+            .transactions;
+        assert_eq!(cc_transactions.len(), 2);
+
+        // First transaction
+        let t0 = &cc_transactions[0];
+        assert_eq!(t0.trans_type, "DEBIT");
+        assert_eq!(
+            t0.dt_posted,
+            chrono::Utc.with_ymd_and_hms(2025, 7, 15, 8, 0, 0).unwrap()
+        );
+        assert_eq!(t0.trans_amount, -55.75);
+        assert_eq!(t0.fit_id, "TXN123456");
+        assert_eq!(t0.check_num, None);
+        assert_eq!(t0.name, "CASH BACK");
+        assert_eq!(t0.memo, Some("Weekly groceries".to_string()));
+
+        // Second transaction
+        let t1 = &bank_transactions[1];
         assert_eq!(t1.trans_type, "CREDIT");
         assert_eq!(
             t1.dt_posted,
@@ -844,11 +913,333 @@ mod qfx_file_tests {
     }
 
     #[test]
+    fn test_qfx_parse_valid_file_no_transactions() {
+        let file_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/sample_bank_msg_no_transactions.qfx"
+        );
+        let result = QFX::new_from_file(file_path);
+        assert!(
+            result.is_ok(),
+            "Expected QFX::new_from_file to succeed, got error: {:?}",
+            result.err()
+        );
+        let qfx = result.unwrap();
+        // Optionally, check that at least one of the main sections is present
+        assert!(
+            qfx.sign_on_msg_srs_v1.is_some()
+                || qfx.credit_card_msg_srs_v1.is_none()
+                || qfx.bank_msg_srs_v1.is_some(),
+            "Expected at least one section to be present in parsed QFX"
+        );
+
+        let bank_transactions = qfx
+            .bank_msg_srs_v1
+            .unwrap()
+            .stmttrns
+            .stmtrs
+            .banktranslist
+            .transactions;
+        assert_eq!(bank_transactions.len(), 0);
+
+        let cc_transactions = qfx
+            .credit_card_msg_srs_v1
+            .unwrap()
+            .ccstmttrns
+            .ccstmtrs
+            .banktranslist
+            .transactions;
+        assert_eq!(cc_transactions.len(), 0);
+    }
+
+    #[test]
     fn test_qfx_parse_missing_file() {
         let result = QFX::new_from_file("tests/data/does_not_exist.qfx");
         assert!(
             result.is_err(),
             "Expected error when parsing non-existent file"
         );
+    }
+}
+
+#[cfg(test)]
+mod available_balance_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_available_balance_parse_missing_amount() {
+        // Missing BALAMT and DTASOF
+        let input = "<DTASOF>20250725T143000Z</AVAILBAL>";
+        let mut tokens = tokenize(input);
+        let result = AvailableBalance::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_available_balance_parse_missing_date() {
+        // Missing BALAMT and DTASOF
+        let input = "<BALAMT>1234.56</AVAILBAL>";
+        let mut tokens = input
+            .split(['<', '>'].as_ref())
+            .filter(|x| !x.trim().is_empty());
+        let result = AvailableBalance::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_available_balance_parse_valid() {
+        let input = "\
+            <BALAMT>1234.56\
+            <DTASOF>20250725T143000Z\
+        </AVAILBAL>";
+        let mut tokens = input
+            .split(['<', '>'].as_ref())
+            .filter(|x| !x.trim().is_empty());
+        let result = AvailableBalance::parse(&mut tokens);
+
+        assert!(
+            result.is_ok(),
+            "Expected parse to succeed, got: {:?}",
+            result.err()
+        );
+        let avail_bal = result.unwrap();
+        assert_eq!(avail_bal.balance_amount, "1234.56");
+        assert_eq!(
+            avail_bal.dt_as_of,
+            chrono::Utc
+                .with_ymd_and_hms(2025, 7, 25, 14, 30, 0)
+                .unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod ledger_balance_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_ledger_balance_parse_missing_amount() {
+        // Missing BALAMT and DTASOF
+        let input = "<DTASOF>20250725T143000Z</LEDGERBAL>";
+        let mut tokens = input
+            .split(['<', '>'].as_ref())
+            .filter(|x| !x.trim().is_empty());
+        let result = LedgerBal::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_ledger_balance_parse_missing_date() {
+        // Missing BALAMT and DTASOF
+        let input = "<BALAMT>1234.56</LEDGERBAL>";
+        let mut tokens = input
+            .split(['<', '>'].as_ref())
+            .filter(|x| !x.trim().is_empty());
+        let result = LedgerBal::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_ledger_balance_parse_valid() {
+        let input = "\
+            <BALAMT>1234.56\
+            <DTASOF>20250725T143000Z\
+        </LEDGERBAL>";
+        let mut tokens = input
+            .split(['<', '>'].as_ref())
+            .filter(|x| !x.trim().is_empty());
+        let result = LedgerBal::parse(&mut tokens);
+
+        assert!(
+            result.is_ok(),
+            "Expected parse to succeed, got: {:?}",
+            result.err()
+        );
+        let avail_bal = result.unwrap();
+        assert_eq!(avail_bal.balance_amount, "1234.56");
+        assert_eq!(
+            avail_bal.dt_as_of,
+            chrono::Utc
+                .with_ymd_and_hms(2025, 7, 25, 14, 30, 0)
+                .unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod banktranlist_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_banktranlist_parse_valid() {
+        let input = "\
+            <DTSTART>20250725T143000Z\
+            <DTEND>20250726T143000Z\
+            <STMTTRN>\
+                <TRNTYPE>DEBIT\
+                <DTPOSTED>20250725T143000Z\
+                <TRNAMT>-100.51\
+                <FITID>12345\
+                <NAME>Test Transaction\
+            </STMTTRN>\
+            <STMTTRN>\
+                <TRNTYPE>CREDIT\
+                <DTPOSTED>20250726T143000Z\
+                <TRNAMT>200.00\
+                <FITID>12346\
+                <NAME>Another Transaction\
+            </STMTTRN>\
+        </BANKTRANLIST>";
+        let mut tokens = tokenize(input);
+        let result = BankTranList::parse(&mut tokens);
+        assert!(
+            result.is_ok(),
+            "Expected parse to succeed, got: {:?}",
+            result.err()
+        );
+        let banktranlist = result.unwrap();
+        assert_eq!(
+            banktranlist.dt_start,
+            Utc.with_ymd_and_hms(2025, 7, 25, 14, 30, 0).unwrap()
+        );
+        assert_eq!(
+            banktranlist.dt_end,
+            Utc.with_ymd_and_hms(2025, 7, 26, 14, 30, 0).unwrap()
+        );
+        assert_eq!(banktranlist.transactions.len(), 2);
+        assert_eq!(banktranlist.transactions[0].trans_type, "DEBIT");
+        assert_eq!(banktranlist.transactions[1].trans_type, "CREDIT");
+    }
+
+    #[test]
+    fn test_banktranlist_parse_missing_dtstart() {
+        let input = "\
+            <DTEND>20250726T143000Z\
+            </BANKTRANLIST>";
+        let mut tokens = tokenize(input);
+        let result = BankTranList::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error for missing DTSTART, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_banktranlist_parse_missing_dtend() {
+        let input = "\
+            <DTSTART>20250725T143000Z\
+            </BANKTRANLIST>";
+        let mut tokens = tokenize(input);
+        let result = BankTranList::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::MissingRequiredValue(_)),
+                "Expected MissingRequiredValue error for missing DTEND, got: {:?}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_banktranlist_parse_missing_end_tag() {
+        let input = "\
+            <DTSTART>20250725T143000Z\
+            <DTEND>20250726T143000Z\
+        ";
+        let mut tokens = tokenize(input);
+        let result = BankTranList::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                matches!(e, QFXParsingError::UnexpectedEOF(_)),
+                "Expected UnexpectedEOF error for missing /BANKTRANLIST, got: {:?}",
+                e
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn test_status_parse_valid_all_fields() {
+        let input = "\
+            <CODE>200\
+            <SEVERITY>INFO\
+            <MESSAGE>Everything OK\
+        </STATUS>";
+        let mut tokens = tokenize(input);
+        let result = Status::parse(&mut tokens);
+        assert!(result.is_ok());
+        let status = result.unwrap();
+        assert_eq!(status.code, "200");
+        assert_eq!(status.severity, "INFO");
+        assert_eq!(status.message, Some("Everything OK".to_string()));
+    }
+
+    #[test]
+    fn test_status_parse_missing_code() {
+        let input = "\
+            <SEVERITY>ERROR\
+            <MESSAGE>Missing code\
+        </STATUS>";
+        let mut tokens = tokenize(input);
+        let result = Status::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(matches!(e, QFXParsingError::MissingRequiredValue(_)));
+        }
+    }
+
+    #[test]
+    fn test_status_parse_missing_severity() {
+        let input = "\
+            <CODE>404\
+            <MESSAGE>Missing severity\
+        </STATUS>";
+        let mut tokens = tokenize(input);
+        let result = Status::parse(&mut tokens);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(matches!(e, QFXParsingError::MissingRequiredValue(_)));
+        }
     }
 }

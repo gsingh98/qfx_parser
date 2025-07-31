@@ -1,8 +1,12 @@
-// TODO: Require doc comments
-// TODO: Require clippy formatting
 use crate::Parseable;
 use crate::QFXParsingError;
 use crate::Status;
+use crate::parse_ofx_datetime;
+use chrono::DateTime;
+use chrono::Utc;
+
+// TODO: Require doc comments
+// TODO: Require clippy formatting
 
 #[derive(Clone)]
 pub struct SignOnMsgSrsV1 {
@@ -12,9 +16,9 @@ pub struct SignOnMsgSrsV1 {
 #[derive(Clone)]
 pub struct Sonrs {
     status: Option<Status>,
-    fi: Option<FinancialInstitution>,
+    fi: FinancialInstitution,
     bid: Option<String>,
-    dt_server: Option<String>, // TODO: Should be using the DateTime parser for this part
+    dt_server: DateTime<Utc>, // TODO: Should be using the DateTime parser for this part
     dt_acctup: Option<String>,
     language: Option<String>,
     cookie: Option<String>,
@@ -55,24 +59,27 @@ impl<'a> Parseable<'a> for SignOnMsgSrsV1 {
 
 impl<'a> Parseable<'a> for Sonrs {
     fn parse(tokens: &mut impl Iterator<Item = &'a str>) -> Result<Self, QFXParsingError> {
-        let mut sonrs = Self {
-            status: None,
-            fi: None,
-            bid: None,
-            dt_server: None,
-            dt_acctup: None,
-            language: None,
-            user_id: None,
-            cookie: None,
-        };
+        let mut s_status = None;
+        let mut s_fi = None;
+        let mut s_bid = None;
+        let mut s_dt_server = None;
+        let mut s_dt_acctup = None;
+        let mut s_language = None;
+        let mut s_user_id = None;
+        let mut s_cookie = None;
         while let Some(contents) = tokens.next() {
             match contents {
                 "STATUS" => {
-                    sonrs.status = Some(Status::parse(tokens)?);
+                    s_status = Some(Status::parse(tokens)?);
                 }
                 "DTSERVER" => {
-                    if let Some(dt_acctup) = tokens.next() {
-                        sonrs.dt_acctup = Some(dt_acctup.to_string());
+                    if let Some(dt_server) = tokens.next() {
+                        s_dt_server = Some(parse_ofx_datetime(dt_server).map_err(|e| {
+                            QFXParsingError::UnexpectedDateFormat(format!(
+                                "Failed to parse DTSERVER date time: {}",
+                                e
+                            ))
+                        })?);
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTSERVER token".to_string(),
@@ -80,8 +87,8 @@ impl<'a> Parseable<'a> for Sonrs {
                     }
                 }
                 "DTACCTUP" => {
-                    if let Some(dt_server) = tokens.next() {
-                        sonrs.dt_server = Some(dt_server.to_string());
+                    if let Some(dt_acctup) = tokens.next() {
+                        s_dt_acctup = Some(dt_acctup.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the DTACCTUP token".to_string(),
@@ -90,7 +97,7 @@ impl<'a> Parseable<'a> for Sonrs {
                 }
                 "LANGUAGE" => {
                     if let Some(language) = tokens.next() {
-                        sonrs.language = Some(language.to_string());
+                        s_language = Some(language.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the LANGUAGE token".to_string(),
@@ -98,11 +105,11 @@ impl<'a> Parseable<'a> for Sonrs {
                     }
                 }
                 "FI" => {
-                    sonrs.fi = Some(FinancialInstitution::parse(tokens)?);
+                    s_fi = Some(FinancialInstitution::parse(tokens)?);
                 }
                 "INTU.BID" => {
                     if let Some(bid) = tokens.next() {
-                        sonrs.bid = Some(bid.to_string());
+                        s_bid = Some(bid.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the INTU.BID token".to_string(),
@@ -111,7 +118,7 @@ impl<'a> Parseable<'a> for Sonrs {
                 }
                 "INTU.USERID" => {
                     if let Some(user_id) = tokens.next() {
-                        sonrs.user_id = Some(user_id.to_string());
+                        s_user_id = Some(user_id.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
                             "Expected token following the INTU.BID token".to_string(),
@@ -120,15 +127,28 @@ impl<'a> Parseable<'a> for Sonrs {
                 }
                 "SESSCOOKIE" => {
                     if let Some(cookie) = tokens.next() {
-                        sonrs.cookie = Some(cookie.to_string());
+                        s_cookie = Some(cookie.to_string());
                     } else {
                         return Err(QFXParsingError::UnexpectedEOF(
-                            "Expected token following the INTU.BID token".to_string(),
+                            "Expected token following the SESSCOOKIE token".to_string(),
                         ));
                     }
                 }
                 "/SONRS" => {
-                    return Ok(sonrs);
+                    return Ok(Self {
+                        status: s_status,
+                        fi: s_fi.ok_or(QFXParsingError::MissingRequiredValue(
+                            "Financial Institution (FI) is required in SONRS".to_string(),
+                        ))?,
+                        bid: s_bid,
+                        dt_server: s_dt_server.ok_or(QFXParsingError::MissingRequiredValue(
+                            "DTSERVER is required in SONRS".to_string(),
+                        ))?,
+                        dt_acctup: s_dt_acctup,
+                        cookie: s_cookie,
+                        language: s_language,
+                        user_id: s_user_id,
+                    });
                 }
                 _ => {
                     // Unknown token

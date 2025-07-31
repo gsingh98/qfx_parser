@@ -44,23 +44,6 @@ NEWFILEUID:20250730001
         <BANKTRANLIST>
           <DTSTART>20250701000000
           <DTEND>20250730235959
-          <STMTTRN>
-            <TRNTYPE>DEBIT
-            <DTPOSTED>20250715080000
-            <TRNAMT>-55.75
-            <FITID>TXN123456
-            <CHECKNUM>1005
-            <NAME>GROCERY STORE
-            <MEMO>Weekly groceries
-          </STMTTRN>
-          <STMTTRN>
-            <TRNTYPE>CREDIT
-            <DTPOSTED>20250716090000
-            <TRNAMT>1000.00
-            <FITID>TXN123457
-            <NAME>PAYROLL
-            <MEMO>DIRECT DEPOSIT
-          </STMTTRN>
         </BANKTRANLIST>
         <LEDGERBAL>
           <BALAMT>3244.25
@@ -73,7 +56,7 @@ NEWFILEUID:20250730001
       </STMTRS>
     </STMTTRNRS>
   </BANKMSGSRSV1>
-  <CREDITCARDMSGSRSV1>
+    <CREDITCARDMSGSRSV1>
     <CCSTMTTRNRS>
       <TRNUID>2001
       <STATUS>
@@ -88,22 +71,6 @@ NEWFILEUID:20250730001
         <BANKTRANLIST>
           <DTSTART>20250701000000
           <DTEND>20250730235959
-          <STMTTRN>
-            <TRNTYPE>DEBIT
-            <DTPOSTED>20250715080000
-            <TRNAMT>-55.75
-            <FITID>TXN123456
-            <NAME>CASH BACK
-            <MEMO>Weekly groceries
-          </STMTTRN>
-          <STMTTRN>
-            <TRNTYPE>CREDIT
-            <DTPOSTED>20250716090000
-            <TRNAMT>1000.00
-            <FITID>TXN123457
-            <NAME>PAYROLL
-            <MEMO>DIRECT DEPOSIT
-          </STMTTRN>
         </BANKTRANLIST>
         <LEDGERBAL>
           <BALAMT>-500.75
