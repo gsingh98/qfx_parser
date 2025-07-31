@@ -9,6 +9,7 @@ use chrono::Utc;
 use chrono::format::ParseError;
 use credit_card::CCMsgSrsV1;
 use sign_on::SignOnMsgSrsV1;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::Read;
 use thiserror::Error;
@@ -75,7 +76,7 @@ pub struct BankTranList {
     pub transactions: Vec<Stmttrn>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Stmttrn {
     pub trans_type: String,
     pub dt_posted: DateTime<Utc>,
@@ -86,6 +87,19 @@ pub struct Stmttrn {
     pub name: String,
     pub memo: Option<String>,
     pub check_num: Option<String>, // Should only be used with CHECK or DEBIT transactions
+}
+
+impl Display for Stmttrn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Stmttrn {{ dt_posted: {}, trans_amount: {}, name: {}, memo: {} }}",
+            self.dt_posted,
+            self.trans_amount,
+            self.name,
+            self.memo.as_deref().unwrap_or(""),
+        )
+    }
 }
 
 impl QFX {
