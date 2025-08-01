@@ -611,7 +611,7 @@ fn remove_last_bracketed(s: &str) -> &str {
 }
 
 // Helper tokenizer for input strings
-fn tokenize(input: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn tokenize(input: &str) -> impl Iterator<Item = &str> {
     // Tokenize on the <> tags and iterate over the vector that is produced.
     // TODO: VULNERABLE TO CODE INJECTION OR SOMETHING LIKE THAT? LOOK IN TO A BETTER APPROACH!
     input

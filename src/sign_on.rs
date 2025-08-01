@@ -2,6 +2,7 @@ use crate::Parseable;
 use crate::QFXParsingError;
 use crate::Status;
 use crate::parse_ofx_datetime;
+use crate::tokenize;
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -214,5 +215,134 @@ impl<'a> Parseable<'a> for FinancialInstitution {
         return Err(QFXParsingError::UnexpectedEOF(
             "Found unexpected EOF. Was still expecting the '/FI' token".to_string(),
         ));
+    }
+}
+
+#[cfg(test)]
+mod financial_institution_tests {
+    use super::*;
+
+    #[test]
+    fn test_financial_institution_missing_org() {
+        let input = "<FID> 1234 </FI>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = FinancialInstitution::parse(&mut tokens);
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("Missing ORG")
+        ));
+    }
+
+    #[test]
+    fn test_financial_institution_missing_fid() {
+        let input = "<ORG> BANKORG </FI>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = FinancialInstitution::parse(&mut tokens);
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("Missing FID")
+        ));
+    }
+
+    #[test]
+    fn test_financial_institution_valid() {
+        let input = "<ORG>BANK ORG<FID>1234</FI>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = FinancialInstitution::parse(&mut tokens).unwrap();
+        assert_eq!(result.org, "BANK ORG");
+        assert_eq!(result.fid, "1234");
+    }
+}
+
+#[cfg(test)]
+mod sonrs_tests {
+    use super::*;
+    use chrono::{TimeZone, Timelike};
+
+    #[test]
+    fn test_sonrs_missing_fi() {
+        // Missing <FI> block
+        let input = "\
+            <STATUS>\
+            <CODE>0\
+            <SEVERITY>INFO\
+            <MESSAGE>SUCCESS\
+            </STATUS>\
+            <DTSERVER>20250623105912.014[-7:PDT]\
+            <LANGUAGE>ENG\
+            <SESSCOOKIE>06232025135911915\
+            <INTU.BID>3000\
+            <INTU.USERID>userid\
+            </SONRS>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = Sonrs::parse(&mut tokens);
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(_))
+        ));
+    }
+
+    #[test]
+    fn test_sonrs_missing_dtserver() {
+        // Missing <DTSERVER>
+        let input = "\
+            <STATUS>\
+            <CODE>0\
+            <SEVERITY>INFO\
+            <MESSAGE>SUCCESS\
+            </STATUS>\
+            <LANGUAGE>ENG\
+            <FI>\
+            <ORG>W\
+            <FID>3\
+            </FI>\
+            <SESSCOOKIE>06232025135911915\
+            <INTU.BID>3000\
+            <INTU.USERID>userid\
+            </SONRS>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = Sonrs::parse(&mut tokens);
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(_))
+        ));
+    }
+
+    #[test]
+    fn test_sonrs_valid_minimal() {
+        let input = "\
+            <STATUS>\
+            <CODE>0\
+            <SEVERITY>INFO\
+            <MESSAGE>SUCCESS\
+            </STATUS>\
+            <DTSERVER>20250623105912.014[-7:PDT]\
+            <LANGUAGE>ENG\
+            <FI>\
+            <ORG>W\
+            <FID>3\
+            </FI>\
+            <SESSCOOKIE>06232025135911915\
+            <INTU.BID>3000\
+            <INTU.USERID>userid\
+            </SONRS>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = Sonrs::parse(&mut tokens).unwrap();
+        assert_eq!(result.fi.org, "W");
+        assert_eq!(result.fi.fid, "3");
+        assert_eq!(
+            result.dt_server,
+            chrono::Utc
+                .with_ymd_and_hms(2025, 6, 23, 10, 59, 12)
+                .unwrap()
+                .with_nanosecond(14000000)
+                .unwrap()
+        );
+        assert!(result.status.is_some());
+        assert_eq!(result.language.as_deref(), Some("ENG"));
+        assert_eq!(result.cookie.as_deref(), Some("06232025135911915"));
+        assert_eq!(result.bid.as_deref(), Some("3000"));
+        assert_eq!(result.user_id.as_deref(), Some("userid"));
+        assert!(result.dt_acctup.is_none());
     }
 }
