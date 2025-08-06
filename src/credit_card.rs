@@ -21,7 +21,7 @@ pub struct Ccstmttrnrs {
 pub struct Ccstmtrs {
     pub currency: Option<String>,
     pub ccacctfrom: Ccacctfrom,
-    pub banktranslist: BankTranList, // TODO: Should not be a pub(crate) visibility
+    pub banktranslist: BankTranList,
     pub ledgerbal: Option<LedgerBal>,
     pub availbal: Option<AvailableBalance>,
 }
@@ -198,6 +198,477 @@ impl<'a> Parseable<'a> for Ccacctfrom {
         }
         return Err(QFXParsingError::UnexpectedEOF(
             "Found unexpected EOF. Was still expecting the '/CCACCTFROM' token".to_string(),
+        ));
+    }
+}
+
+#[cfg(test)]
+mod test_ccacctfrom {
+    use super::*;
+    use crate::tokenize;
+
+    #[test]
+    fn test_ccacctfrom_valid_input() {
+        let input = "\
+            <ACCTID> 1234567890\
+            </CCACCTFROM>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccacctfrom::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccacctfrom = result.unwrap();
+        assert_eq!(ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccacctfrom_missing_acctid() {
+        let input = "</CCACCTFROM>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccacctfrom::parse(&mut tokens);
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("ACCTID is a required value")
+        ));
+    }
+
+    #[test]
+    fn test_ccacctfrom_unknown_tag() {
+        let input = "<UNKNOWNTAG>value</CCACCTFROM>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccacctfrom::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedToken(msg)) if msg.contains("UNKNOWNTAG") && msg.contains("CCACCTFROM")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod test_ccstmttrnrs {
+    use super::*;
+    use crate::tokenize;
+
+    #[test]
+    fn test_ccstmttrnrs_valid_minimal() {
+        let input = "\
+            <CCSTMTRS>\
+                <CCACCTFROM>\
+                    <ACCTID>1234567890\
+                </CCACCTFROM>\
+                <BANKTRANLIST>\
+                    <DTSTART>20250715080000\
+                    <DTEND>20250716090000\
+                </BANKTRANLIST>\
+            </CCSTMTRS>\
+            </CCSTMTTRNRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmttrnrs = result.unwrap();
+        assert!(ccstmttrnrs.trnuid.is_none());
+        assert!(ccstmttrnrs.status.is_none());
+        assert_eq!(ccstmttrnrs.ccstmtrs.ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccstmttrnrs_valid_with_trnuid() {
+        let input = "\
+            <TRNUID>12345-67890\
+            <CCSTMTRS>\
+                <CCACCTFROM>\
+                    <ACCTID>1234567890\
+                </CCACCTFROM>\
+                <BANKTRANLIST>\
+                    <DTSTART>20250715080000\
+                    <DTEND>20250716090000\
+                </BANKTRANLIST>\
+            </CCSTMTRS>\
+            </CCSTMTTRNRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmttrnrs = result.unwrap();
+        assert_eq!(ccstmttrnrs.trnuid, Some("12345-67890".to_string()));
+        assert!(ccstmttrnrs.status.is_none());
+        assert_eq!(ccstmttrnrs.ccstmtrs.ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccstmttrnrs_valid_with_status() {
+        let input = "\
+            <STATUS>\
+                <CODE>0\
+                <SEVERITY>INFO\
+            </STATUS>\
+            <CCSTMTRS>\
+                <CCACCTFROM>\
+                    <ACCTID>1234567890\
+                </CCACCTFROM>\
+                <BANKTRANLIST>\
+                    <DTSTART>20250715080000\
+                    <DTEND>20250716090000\
+                </BANKTRANLIST>\
+            </CCSTMTRS>\
+            </CCSTMTTRNRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmttrnrs = result.unwrap();
+        assert!(ccstmttrnrs.trnuid.is_none());
+        assert!(ccstmttrnrs.status.is_some());
+        assert_eq!(ccstmttrnrs.ccstmtrs.ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccstmttrnrs_missing_ccstmtrs() {
+        let input = "\
+            <TRNUID>12345-67890\
+            </CCSTMTTRNRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("CCSTMTRS section is required")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmttrnrs_unknown_tag() {
+        let input = "\
+            <UNKNOWNTAG>value\
+            <CCSTMTRS>\
+                <CCACCTFROM>\
+                    <ACCTID>1234567890\
+                </CCACCTFROM>\
+                <BANKTRANLIST>\
+                    <DTSTART>20250715080000\
+                    <DTEND>20250716090000\
+                </BANKTRANLIST>\
+            </CCSTMTRS>\
+            </CCSTMTTRNRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedToken(msg)) if msg.contains("UNKNOWNTAG") && msg.contains("CCSTMTTRNRS")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmttrnrs_unexpected_eof_after_trnuid() {
+        let input = "<TRNUID>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedEOF(msg)) if msg.contains("Expected token following the TRNUID token")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmttrnrs_unexpected_eof_missing_closing_tag() {
+        let input = "\
+            <TRNUID>12345-67890\
+            <CCSTMTRS>\
+                <CCACCTFROM>\
+                    <ACCTID>1234567890\
+                </CCACCTFROM>\
+                <BANKTRANLIST>\
+                    <DTSTART>20250715080000\
+                    <DTEND>20250716090000\
+                </BANKTRANLIST>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmttrnrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedEOF(msg)) if msg.contains("Was still expecting the '/CCSTMTTRNRS' token")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod test_ccstmtrs {
+    use super::*;
+    use crate::tokenize;
+
+    #[test]
+    fn test_ccstmtrs_valid_minimal() {
+        let input = "\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmtrs = result.unwrap();
+        assert!(ccstmtrs.currency.is_none());
+        assert_eq!(ccstmtrs.ccacctfrom.acct_id, "1234567890");
+        assert!(ccstmtrs.ledgerbal.is_none());
+        assert!(ccstmtrs.availbal.is_none());
+    }
+
+    #[test]
+    fn test_ccstmtrs_valid_with_currency() {
+        let input = "\
+            <CURDEF>USD\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmtrs = result.unwrap();
+        assert_eq!(ccstmtrs.currency, Some("USD".to_string()));
+        assert_eq!(ccstmtrs.ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccstmtrs_valid_with_ledgerbal() {
+        let input = "\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>\
+            <LEDGERBAL>\
+                <BALAMT>1000.00\
+                <DTASOF>20250715080000\
+            </LEDGERBAL>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmtrs = result.unwrap();
+        assert!(ccstmtrs.ledgerbal.is_some());
+        assert_eq!(ccstmtrs.ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccstmtrs_valid_with_availbal() {
+        let input = "\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>\
+            <AVAILBAL>\
+                <BALAMT>500.00\
+                <DTASOF>20250715080000\
+            </AVAILBAL>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccstmtrs = result.unwrap();
+        assert!(ccstmtrs.availbal.is_some());
+        assert_eq!(ccstmtrs.ccacctfrom.acct_id, "1234567890");
+    }
+
+    #[test]
+    fn test_ccstmtrs_missing_ccacctfrom() {
+        let input = "\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("CCACCTFROM is a required value")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmtrs_missing_banktranlist() {
+        let input = "\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("BANKTRANSLIST is a required value")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmtrs_unknown_tag() {
+        let input = "\
+            <UNKNOWNTAG>value\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>\
+            </CCSTMTRS>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedToken(msg)) if msg.contains("UNKNOWNTAG") && msg.contains("CCSTMTRS")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmtrs_unexpected_eof_after_curdef() {
+        let input = "<CURDEF>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedEOF(msg)) if msg.contains("Expected token following the CURDEF token")
+        ));
+    }
+
+    #[test]
+    fn test_ccstmtrs_unexpected_eof_missing_closing_tag() {
+        let input = "\
+            <CURDEF>USD\
+            <CCACCTFROM>\
+                <ACCTID>1234567890\
+            </CCACCTFROM>\
+            <BANKTRANLIST>\
+                <DTSTART>20250715080000\
+                <DTEND>20250716090000\
+            </BANKTRANLIST>";
+        let mut tokens = tokenize(input);
+
+        let result = Ccstmtrs::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedEOF(msg)) if msg.contains("Was still expecting the '/CCSTMTRS'")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod test_ccmsgsrsv1 {
+    use super::*;
+    use crate::tokenize;
+
+    #[test]
+    fn test_ccmsgsrsv1_valid_minimal() {
+        let input = "\
+            <CCSTMTTRNRS>\
+                <CCSTMTRS>\
+                    <CCACCTFROM>\
+                        <ACCTID>1234567890\
+                    </CCACCTFROM>\
+                    <BANKTRANLIST>\
+                        <DTSTART>20250715080000\
+                        <DTEND>20250716090000\
+                    </BANKTRANLIST>\
+                </CCSTMTRS>\
+            </CCSTMTTRNRS>\
+            </CREDITCARDMSGSRSV1>";
+        let mut tokens = tokenize(input);
+
+        let result = CCMsgSrsV1::parse(&mut tokens);
+        assert!(result.is_ok());
+        let ccmsgsrsv1 = result.unwrap();
+        assert!(ccmsgsrsv1.ccstmttrns.trnuid.is_none());
+        assert!(ccmsgsrsv1.ccstmttrns.status.is_none());
+        assert_eq!(
+            ccmsgsrsv1.ccstmttrns.ccstmtrs.ccacctfrom.acct_id,
+            "1234567890"
+        );
+    }
+
+    #[test]
+    fn test_ccmsgsrsv1_missing_ccstmttrnrs() {
+        let input = "</CREDITCARDMSGSRSV1>";
+        let mut tokens = tokenize(input);
+
+        let result = CCMsgSrsV1::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("CCSTMTTRNRS is a requied value")
+        ));
+    }
+
+    #[test]
+    fn test_ccmsgsrsv1_unknown_tag() {
+        let input = "<UNKNOWNTAG>";
+        let mut tokens = tokenize(input);
+
+        let result = CCMsgSrsV1::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedToken(msg)) if msg.contains("UNKNOWNTAG") && msg.contains("CREDITCARDMSGSRSV1")
+        ));
+    }
+
+    #[test]
+    fn test_ccmsgsrsv1_unexpected_eof_missing_closing_tag() {
+        let input = "\
+            <CCSTMTTRNRS>\
+                <CCSTMTRS>\
+                    <CCACCTFROM>\
+                        <ACCTID>1234567890\
+                    </CCACCTFROM>\
+                    <BANKTRANLIST>\
+                        <DTSTART>20250715080000\
+                        <DTEND>20250716090000\
+                    </BANKTRANLIST>\
+                </CCSTMTRS>\
+            </CCSTMTTRNRS>";
+        let mut tokens = tokenize(input);
+
+        let result = CCMsgSrsV1::parse(&mut tokens);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::UnexpectedEOF(msg)) if msg.contains("Was still expecting the '/CREDITCARDMSGSRSV1' token")
         ));
     }
 }

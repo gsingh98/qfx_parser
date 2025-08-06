@@ -2,7 +2,6 @@ use crate::Parseable;
 use crate::QFXParsingError;
 use crate::Status;
 use crate::parse_ofx_datetime;
-use crate::tokenize;
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -221,6 +220,7 @@ impl<'a> Parseable<'a> for FinancialInstitution {
 #[cfg(test)]
 mod financial_institution_tests {
     use super::*;
+    use crate::tokenize;
 
     #[test]
     fn test_financial_institution_missing_org() {
@@ -257,6 +257,7 @@ mod financial_institution_tests {
 #[cfg(test)]
 mod sonrs_tests {
     use super::*;
+    use crate::tokenize;
     use chrono::{TimeZone, Timelike};
 
     #[test]
@@ -344,5 +345,49 @@ mod sonrs_tests {
         assert_eq!(result.bid.as_deref(), Some("3000"));
         assert_eq!(result.user_id.as_deref(), Some("userid"));
         assert!(result.dt_acctup.is_none());
+    }
+}
+
+#[cfg(test)]
+mod sign_on_msg_srs_v1_tests {
+    use super::*;
+    use crate::tokenize;
+
+    #[test]
+    fn test_sign_on_msg_srs_v1_missing_sonrs() {
+        let input = "</SIGNONMSGSRSV1>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = SignOnMsgSrsV1::parse(&mut tokens);
+        assert!(matches!(
+            result,
+            Err(QFXParsingError::MissingRequiredValue(msg)) if msg.contains("Missing value SONRS")
+        ));
+    }
+
+    #[test]
+    fn test_sign_on_msg_srs_v1_valid() {
+        let input = "\
+            <SONRS>\
+            <STATUS>\
+            <CODE>0\
+            <SEVERITY>INFO\
+            <MESSAGE>SUCCESS\
+            </STATUS>\
+            <DTSERVER>20250623105912.014[-7:PDT]\
+            <LANGUAGE>ENG\
+            <FI>\
+            <ORG>W\
+            <FID>3\
+            </FI>\
+            <SESSCOOKIE>06232025135911915\
+            <INTU.BID>3000\
+            <INTU.USERID>userid\
+            </SONRS>\
+            </SIGNONMSGSRSV1>";
+        let mut tokens = tokenize(input).into_iter();
+        let result = SignOnMsgSrsV1::parse(&mut tokens).unwrap();
+        assert_eq!(result.sonrs.fi.org, "W");
+        assert_eq!(result.sonrs.fi.fid, "3");
+        assert!(result.sonrs.status.is_some());
     }
 }
