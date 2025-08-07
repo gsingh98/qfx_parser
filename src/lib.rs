@@ -683,13 +683,13 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_valid_minimal() {
         let input = "\
-                <TRNTYPE>DEBIT\
-                <DTPOSTED>20250725T143000Z\
-                <TRNAMT>-100.51\
-                <FITID>12345\
-                <NAME>Test Transaction\
-                <CHECKNUM>1001\
-            </STMTTRN>";
+            <TRNTYPE>DEBIT\
+            <DTPOSTED>20250725T143000Z\
+            <TRNAMT>-100.51\
+            <FITID>12345\
+            <NAME>Test Transaction\
+            <CHECKNUM>1001\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens).unwrap();
         assert_eq!(stmttrn.trans_type, "DEBIT");
@@ -708,13 +708,13 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_invalid_transaction() {
         let input = "\
-                <TRNTYPE>DEBIT\
-                <DTPOSTED>20250725T143000Z\
-                <TRNAMT>100123456-7891\
-                <FITID>12345\
-                <NAME>Test Transaction\
-                <CHECKNUM>1001\
-            </STMTTRN>";
+            <TRNTYPE>DEBIT\
+            <DTPOSTED>20250725T143000Z\
+            <TRNAMT>100123456-7891\
+            <FITID>12345\
+            <NAME>Test Transaction\
+            <CHECKNUM>1001\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
         assert!(stmttrn.is_err());
@@ -730,11 +730,11 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_missing_transaction() {
         let input = "\
-                <TRNTYPE>DEBIT\
-                <DTPOSTED>20250725T143000Z\
-                <FITID>12345\
-                <NAME>Test Transaction\
-            </STMTTRN>";
+            <TRNTYPE>DEBIT\
+            <DTPOSTED>20250725T143000Z\
+            <FITID>12345\
+            <NAME>Test Transaction\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
         assert!(stmttrn.is_err());
@@ -750,11 +750,11 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_missing_date_posted() {
         let input = "\
-                <TRNTYPE>DEBIT\
-                <TRNAMT>1001237891\
-                <FITID>12345\
-                <NAME>Test Transaction\
-            </STMTTRN>";
+            <TRNTYPE>DEBIT\
+            <TRNAMT>1001237891\
+            <FITID>12345\
+            <NAME>Test Transaction\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
         assert!(stmttrn.is_err());
@@ -770,11 +770,11 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_missing_name() {
         let input = "\
-                <TRNTYPE>DEBIT\
-                <DTPOSTED>20250725T143000Z\
-                <TRNAMT>1001237891\
-                <FITID>12345\
-            </STMTTRN>";
+            <TRNTYPE>DEBIT\
+            <DTPOSTED>20250725T143000Z\
+            <TRNAMT>1001237891\
+            <FITID>12345\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
         assert!(stmttrn.is_err());
@@ -790,11 +790,11 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_missing_fitid() {
         let input = "\
-                <TRNTYPE>DEBIT\
-                <DTPOSTED>20250725T143000Z\
-                <TRNAMT>1001237891\
-                <NAME>Test Transaction\
-            </STMTTRN>";
+            <TRNTYPE>DEBIT\
+            <DTPOSTED>20250725T143000Z\
+            <TRNAMT>1001237891\
+            <NAME>Test Transaction\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
         assert!(stmttrn.is_err());
@@ -810,11 +810,11 @@ mod stmttrn_tests {
     #[test]
     fn test_stmttrn_parse_missing_transaction_type() {
         let input = "\
-                <DTPOSTED>20250725T143000Z\
-                <TRNAMT>1001237891\
-                <FITID>12345\
-                <NAME>Test Transaction\
-            </STMTTRN>";
+            <DTPOSTED>20250725T143000Z\
+            <TRNAMT>1001237891\
+            <FITID>12345\
+            <NAME>Test Transaction\
+        </STMTTRN>";
         let mut tokens = tokenize(input);
         let stmttrn = Stmttrn::parse(&mut tokens);
         assert!(stmttrn.is_err());
@@ -1018,9 +1018,9 @@ mod available_balance_tests {
     #[test]
     fn test_available_balance_parse_valid() {
         let input = "\
-            <BALAMT>1234.56\
-            <DTASOF>20250725T143000Z\
-        </AVAILBAL>";
+        <BALAMT>1234.56\
+        <DTASOF>20250725T143000Z\
+    </AVAILBAL>";
         let mut tokens = input
             .split(['<', '>'].as_ref())
             .filter(|x| !x.trim().is_empty());
@@ -1086,9 +1086,9 @@ mod ledger_balance_tests {
     #[test]
     fn test_ledger_balance_parse_valid() {
         let input = "\
-            <BALAMT>1234.56\
-            <DTASOF>20250725T143000Z\
-        </LEDGERBAL>";
+        <BALAMT>1234.56\
+        <DTASOF>20250725T143000Z\
+    </LEDGERBAL>";
         let mut tokens = input
             .split(['<', '>'].as_ref())
             .filter(|x| !x.trim().is_empty());
@@ -1118,23 +1118,23 @@ mod banktranlist_tests {
     #[test]
     fn test_banktranlist_parse_valid() {
         let input = "\
-            <DTSTART>20250725T143000Z\
-            <DTEND>20250726T143000Z\
-            <STMTTRN>\
-                <TRNTYPE>DEBIT\
-                <DTPOSTED>20250725T143000Z\
-                <TRNAMT>-100.51\
-                <FITID>12345\
-                <NAME>Test Transaction\
-            </STMTTRN>\
-            <STMTTRN>\
-                <TRNTYPE>CREDIT\
-                <DTPOSTED>20250726T143000Z\
-                <TRNAMT>200.00\
-                <FITID>12346\
-                <NAME>Another Transaction\
-            </STMTTRN>\
-        </BANKTRANLIST>";
+        <DTSTART>20250725T143000Z\
+        <DTEND>20250726T143000Z\
+        <STMTTRN>\
+            <TRNTYPE>DEBIT\
+            <DTPOSTED>20250725T143000Z\
+            <TRNAMT>-100.51\
+            <FITID>12345\
+            <NAME>Test Transaction\
+        </STMTTRN>\
+        <STMTTRN>\
+            <TRNTYPE>CREDIT\
+            <DTPOSTED>20250726T143000Z\
+            <TRNAMT>200.00\
+            <FITID>12346\
+            <NAME>Another Transaction\
+        </STMTTRN>\
+    </BANKTRANLIST>";
         let mut tokens = tokenize(input);
         let result = BankTranList::parse(&mut tokens);
         assert!(
@@ -1159,8 +1159,8 @@ mod banktranlist_tests {
     #[test]
     fn test_banktranlist_parse_missing_dtstart() {
         let input = "\
-            <DTEND>20250726T143000Z\
-            </BANKTRANLIST>";
+        <DTEND>20250726T143000Z\
+        </BANKTRANLIST>";
         let mut tokens = tokenize(input);
         let result = BankTranList::parse(&mut tokens);
         assert!(result.is_err());
@@ -1176,8 +1176,8 @@ mod banktranlist_tests {
     #[test]
     fn test_banktranlist_parse_missing_dtend() {
         let input = "\
-            <DTSTART>20250725T143000Z\
-            </BANKTRANLIST>";
+        <DTSTART>20250725T143000Z\
+        </BANKTRANLIST>";
         let mut tokens = tokenize(input);
         let result = BankTranList::parse(&mut tokens);
         assert!(result.is_err());
@@ -1193,9 +1193,9 @@ mod banktranlist_tests {
     #[test]
     fn test_banktranlist_parse_missing_end_tag() {
         let input = "\
-            <DTSTART>20250725T143000Z\
-            <DTEND>20250726T143000Z\
-        ";
+        <DTSTART>20250725T143000Z\
+        <DTEND>20250726T143000Z\
+    ";
         let mut tokens = tokenize(input);
         let result = BankTranList::parse(&mut tokens);
         assert!(result.is_err());
@@ -1216,10 +1216,10 @@ mod status_tests {
     #[test]
     fn test_status_parse_valid_all_fields() {
         let input = "\
-            <CODE>200\
-            <SEVERITY>INFO\
-            <MESSAGE>Everything OK\
-        </STATUS>";
+        <CODE>200\
+        <SEVERITY>INFO\
+        <MESSAGE>Everything OK\
+    </STATUS>";
         let mut tokens = tokenize(input);
         let result = Status::parse(&mut tokens);
         assert!(result.is_ok());
@@ -1232,9 +1232,9 @@ mod status_tests {
     #[test]
     fn test_status_parse_missing_code() {
         let input = "\
-            <SEVERITY>ERROR\
-            <MESSAGE>Missing code\
-        </STATUS>";
+        <SEVERITY>ERROR\
+        <MESSAGE>Missing code\
+    </STATUS>";
         let mut tokens = tokenize(input);
         let result = Status::parse(&mut tokens);
         assert!(result.is_err());
@@ -1246,9 +1246,9 @@ mod status_tests {
     #[test]
     fn test_status_parse_missing_severity() {
         let input = "\
-            <CODE>404\
-            <MESSAGE>Missing severity\
-        </STATUS>";
+        <CODE>404\
+        <MESSAGE>Missing severity\
+    </STATUS>";
         let mut tokens = tokenize(input);
         let result = Status::parse(&mut tokens);
         assert!(result.is_err());
