@@ -18,7 +18,7 @@ pub struct Sonrs {
     pub status: Option<Status>,
     pub fi: FinancialInstitution,
     pub bid: Option<String>,
-    pub dt_server: DateTime<Utc>, // TODO: Should be using the DateTime parser for this part
+    pub dt_server: DateTime<Utc>,
     pub dt_acctup: Option<String>,
     pub language: Option<String>,
     pub cookie: Option<String>,

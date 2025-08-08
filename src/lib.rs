@@ -16,8 +16,6 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum QFXParsingError {
-    #[error("Incorrect format")]
-    NotFoundError(), // TODO: REMOVE THIS LATER
     #[error("Unexpected token found")]
     UnexpectedToken(String),
     #[error("Found unexpected end of file. Expecting more tokens")]
@@ -43,7 +41,11 @@ pub(crate) trait Parseable<'a> {
 }
 
 #[derive(Clone)]
-/// TODO: More types will need to be supported later
+/// NOTE: While there are definitely other types that are available in the OFX standard
+/// I have made a consious decision to only implement the tags used in practice. My research
+/// suggests that even though the INVSTMTMSGSRSV1 is a possible value it is not really
+/// used commonly in QFX files. For now this is being left as a future work item that will
+/// be implemented should the need arise for it.
 pub struct QFX {
     pub sign_on_msg_srs_v1: Option<SignOnMsgSrsV1>,
     pub credit_card_msg_srs_v1: Option<CCMsgSrsV1>,
@@ -89,6 +91,21 @@ pub struct Stmttrn {
     pub check_num: Option<String>, // Should only be used with CHECK or DEBIT transactions
 }
 
+#[derive(Debug, Clone)]
+pub struct Transaction {
+    pub trans_type: String,
+    pub dt_posted: DateTime<Utc>,
+    pub trans_amount: f64,
+    pub fit_id: String,
+    pub correct_fit_id: String,
+    pub name: String,
+    pub memo: String,
+    pub check_num: String,
+    pub account_id: String,
+    pub account_type: String,
+    pub currency: String,
+}
+
 impl Display for Stmttrn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -105,7 +122,6 @@ impl Display for Stmttrn {
 impl QFX {
     // Generate
     pub fn new_from_file(file_path: &str) -> Result<Self, QFXParsingError> {
-        // TODO: Add some validation for the file along with some logging to know what is going on
         let mut file =
             File::open(file_path).map_err(|e| QFXParsingError::FileNotFound(e.to_string()))?;
         let mut contents = String::new();
@@ -141,6 +157,85 @@ impl QFX {
             "Found unexpected EOF. Was still expecting the OFX token to start parsing the file"
                 .to_string(),
         ));
+    }
+
+    /// This is a rather expensive function. It returns a vector containing all the transactions in the built qfx file.
+    pub fn get_transactions(&self) -> Vec<Transaction> {
+        let mut transactions = vec![];
+
+        if let Some(bank_transactions) = &self.bank_msg_srs_v1 {
+            let acct_id = bank_transactions
+                .stmttrns
+                .stmtrs
+                .bankacctfrom
+                .acct_id
+                .clone();
+            let acct_type = bank_transactions
+                .stmttrns
+                .stmtrs
+                .bankacctfrom
+                .acct_type
+                .clone();
+            let currency = bank_transactions
+                .stmttrns
+                .stmtrs
+                .currency
+                .clone()
+                .unwrap_or_default();
+            for stmttrn in &bank_transactions.stmttrns.stmtrs.banktranslist.transactions {
+                transactions.push(Transaction {
+                    trans_type: stmttrn.trans_type.clone(),
+                    dt_posted: stmttrn.dt_posted,
+                    trans_amount: stmttrn.trans_amount,
+                    fit_id: stmttrn.fit_id.clone(),
+                    correct_fit_id: stmttrn.correct_fit_id.clone().unwrap_or_default(),
+                    name: stmttrn.name.clone(),
+                    memo: stmttrn.memo.clone().unwrap_or_default(),
+                    check_num: stmttrn.check_num.clone().unwrap_or_default(),
+                    account_id: acct_id.clone(),
+                    account_type: acct_type.clone(),
+                    currency: currency.clone(),
+                });
+            }
+        }
+
+        if let Some(cc_transactions) = &self.credit_card_msg_srs_v1 {
+            let acct_id = cc_transactions
+                .ccstmttrns
+                .ccstmtrs
+                .ccacctfrom
+                .acct_id
+                .clone();
+            let acct_type = "".to_string();
+            let currency = cc_transactions
+                .ccstmttrns
+                .ccstmtrs
+                .currency
+                .clone()
+                .unwrap_or_default();
+            for stmttrn in &cc_transactions
+                .ccstmttrns
+                .ccstmtrs
+                .banktranslist
+                .transactions
+            {
+                transactions.push(Transaction {
+                    trans_type: stmttrn.trans_type.clone(),
+                    dt_posted: stmttrn.dt_posted,
+                    trans_amount: stmttrn.trans_amount,
+                    fit_id: stmttrn.fit_id.clone(),
+                    correct_fit_id: stmttrn.correct_fit_id.clone().unwrap_or_default(),
+                    name: stmttrn.name.clone(),
+                    memo: stmttrn.memo.clone().unwrap_or_default(),
+                    check_num: stmttrn.check_num.clone().unwrap_or_default(),
+                    account_id: acct_id.clone(),
+                    account_type: acct_type.clone(),
+                    currency: currency.clone(),
+                });
+            }
+        }
+
+        transactions
     }
 }
 
@@ -973,6 +1068,89 @@ mod qfx_file_tests {
             result.is_err(),
             "Expected error when parsing non-existent file"
         );
+    }
+
+    #[test]
+    fn test_qfx_get_transactions() {
+        let file_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/sample_bank_msg_transactions.qfx"
+        );
+        let result = QFX::new_from_file(file_path);
+        assert!(
+            result.is_ok(),
+            "Expected QFX::new_from_file to succeed, got error: {:?}",
+            result.err()
+        );
+        let qfx = result.unwrap();
+
+        // Test the get_transactions function
+        let transactions = qfx.get_transactions();
+
+        // Should have 4 total transactions (2 bank + 2 credit card)
+        assert_eq!(transactions.len(), 4);
+
+        // Test first bank transaction
+        let bank_txn_1 = transactions
+            .iter()
+            .find(|t| t.fit_id == "TXN123456" && !t.account_type.is_empty())
+            .unwrap();
+        assert_eq!(bank_txn_1.trans_type, "DEBIT");
+        assert_eq!(bank_txn_1.trans_amount, -55.75);
+        assert_eq!(bank_txn_1.name, "GROCERY STORE");
+        assert_eq!(bank_txn_1.memo, "Weekly groceries");
+        assert_eq!(bank_txn_1.check_num, "1005");
+        assert_eq!(bank_txn_1.account_id, "987654321");
+        assert_eq!(bank_txn_1.account_type, "CHECKING");
+
+        // Test second bank transaction
+        let bank_txn_2 = transactions
+            .iter()
+            .find(|t| t.fit_id == "TXN123457" && !t.account_type.is_empty())
+            .unwrap();
+        assert_eq!(bank_txn_2.trans_type, "CREDIT");
+        assert_eq!(bank_txn_2.trans_amount, 1000.00);
+        assert_eq!(bank_txn_2.name, "PAYROLL");
+        assert_eq!(bank_txn_2.memo, "DIRECT DEPOSIT");
+        assert_eq!(bank_txn_2.check_num, "");
+        assert_eq!(bank_txn_2.account_id, "987654321");
+        assert_eq!(bank_txn_2.account_type, "CHECKING");
+
+        // Test first credit card transaction
+        let cc_txn_1 = transactions
+            .iter()
+            .find(|t| t.fit_id == "TXN123456" && t.account_type.is_empty())
+            .unwrap();
+        assert_eq!(cc_txn_1.trans_type, "DEBIT");
+        assert_eq!(cc_txn_1.trans_amount, -55.75);
+        assert_eq!(cc_txn_1.name, "CASH BACK");
+        assert_eq!(cc_txn_1.memo, "Weekly groceries");
+        assert_eq!(cc_txn_1.check_num, "");
+        assert_eq!(cc_txn_1.account_id, "4111222233334444");
+        assert_eq!(cc_txn_1.account_type, ""); // Credit card accounts have empty account_type
+
+        // Test second credit card transaction
+        let cc_txn_2 = transactions
+            .iter()
+            .find(|t| t.fit_id == "TXN123457" && t.account_type.is_empty())
+            .unwrap();
+        assert_eq!(cc_txn_2.trans_type, "CREDIT");
+        assert_eq!(cc_txn_2.trans_amount, 1000.00);
+        assert_eq!(cc_txn_2.name, "PAYROLL");
+        assert_eq!(cc_txn_2.memo, "DIRECT DEPOSIT");
+        assert_eq!(cc_txn_2.check_num, "");
+        assert_eq!(cc_txn_2.account_id, "4111222233334444");
+        assert_eq!(cc_txn_2.account_type, ""); // Credit card accounts have empty account_type
+
+        // Verify all transactions have account information
+        for transaction in &transactions {
+            assert!(
+                !transaction.account_id.is_empty(),
+                "Account ID should not be empty"
+            );
+            assert!(!transaction.fit_id.is_empty(), "FIT ID should not be empty");
+            assert!(!transaction.name.is_empty(), "Name should not be empty");
+        }
     }
 }
 
