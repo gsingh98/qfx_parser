@@ -2,6 +2,8 @@
 name = "qfx_parser"
 version = "0.1.0"
 edition = "2024"
+description = "A small qfx parser for personal projects that supports bank and cc transactions"
+license = "MIT"
 
 [dependencies]
 chrono = "0.4.41"
